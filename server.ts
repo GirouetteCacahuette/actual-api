@@ -1,41 +1,89 @@
 import express, { Request, Response } from 'express';
-import { init } from '@actual-app/api';
+import { init, getAccounts, downloadBudget, loadBudget } from '@actual-app/api';
 
 const app = express();
 const PORT: number = 3000;
 
 app.use(express.json());
 
-const getEnvironmentVariables = (): { password: string; serverURL: string } => {
-  const password: string | undefined = process.env.ACTUAL_PASSWORD;
-  const serverURL: string | undefined = process.env.ACTUAL_SERVER_URL;
+// Define TypeScript interfaces for account data
+interface Account {
+  id: string;
+  name: string;
+  type: string;
+  balance: number;
+  offbudget: boolean;
+  closed: boolean;
+  sort_order: number;
+}
 
-  if (!password || !serverURL) {
-    console.error('Error: Required environment variables ACTUAL_PASSWORD and ACTUAL_SERVER_URL must be set.');
-    process.exit(1);
-  }
+interface AccountsResponse {
+  accounts: Account[];
+}
 
-  return { password, serverURL };
+// Define TypeScript interfaces for budget data
+interface Budget {
+  id: string;
+  name: string;
+  encrypted: boolean;
+}
+
+interface EnvironmentVariables {
+    actualDataDir: string;
+    password: string;
+    serverURL: string;
+    syncId: string;
+    budgetEncryptionKey: string;
+}
+
+const getEnvironmentVariables = (): EnvironmentVariables => {
+    const envVars: EnvironmentVariables = {
+        actualDataDir: process.env.ACTUAL_DATA_DIR || './cache/actual-data',
+        password: process.env.ACTUAL_PASSWORD || '',
+        serverURL: process.env.ACTUAL_SERVER_URL || '',
+        syncId: process.env.ACTUAL_SYNC_ID || '',
+        budgetEncryptionKey: process.env.ACTUAL_BUDGET_ENCRYPTION_KEY || '',
+    }
+
+    for (const [key, value] of Object.entries(envVars)) {
+        if (!value) {
+            console.error(`Error: Required environment variable ${key} must be set.`);
+            process.exit(1);
+        }
+    }
+    
+    return envVars;
 };
 
 (async () => {
   try {
-    const { password, serverURL } = getEnvironmentVariables();
+    const { password, serverURL, syncId, budgetEncryptionKey, actualDataDir } = getEnvironmentVariables();
     
     await init({
-      dataDir: '/tmp/actual-data',
+      dataDir: actualDataDir,
       serverURL: serverURL,
       password: password,
     });
 
     console.log('Actual API initialized successfully');
+
+    // Download the budget
+    await downloadBudget(syncId, {password: budgetEncryptionKey});
   } catch (error) {
-    console.error('Error initializing Actual API:', error);
+    console.error('Error during server initialization:', error);
+    process.exit(1);
   }
 })();
 
-app.get('/api/hello', (req: Request, res: Response) => {
-  res.json({ message: 'Hello World' });
+app.get('/api/accounts', async (req: Request, res: Response) => {
+  try {
+    const accounts: Account[] = await getAccounts();
+    const response: AccountsResponse = { accounts };
+    res.json(response);
+  } catch (error) {
+    console.error('Error fetching accounts:', error);
+    res.status(500).json({ error: 'Failed to fetch accounts' });
+  }
 });
 
 app.listen(PORT, () => {

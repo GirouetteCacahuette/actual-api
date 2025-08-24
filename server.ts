@@ -138,15 +138,19 @@ app.get('/api/accounts', async (req: Request, res: Response) => {
   }
 });
 
-app.get('/api/category/:categoryName/budget', async (req: Request, res: Response) => {
-  const { categoryName } = req.params;
+app.get('/api/budget', async (req: Request, res: Response) => {
+  const { category } = req.query;
+
+  if (!category || typeof category !== 'string') {
+    return res.status(400).json({ error: 'category query parameter is required and must be a string' });
+  }
 
   try {
     // Fetch all categories to find the category by name
     const categories: Category[] = await getCategories();
-    const category = categories.find(cat => cat.name.toLowerCase() === categoryName.toLowerCase());
+    const categoryObj = categories.find(cat => cat.name.toLowerCase() === category.toLowerCase());
 
-    if (!category) {
+    if (!categoryObj) {
       return res.status(404).json({ error: 'Category not found' });
     }
 
@@ -161,7 +165,7 @@ app.get('/api/category/:categoryName/budget', async (req: Request, res: Response
     
     for (const group of budgetData.categoryGroups) {
       if (group.categories) {
-        const found = group.categories.find(cat => cat.id === category.id);
+        const found = group.categories.find(cat => cat.id === categoryObj.id);
         if (found) {
           categoryBudget = found;
           break;
@@ -179,8 +183,8 @@ app.get('/api/category/:categoryName/budget', async (req: Request, res: Response
     const balance = utils.integerToAmount(categoryBudget.balance);
 
     const response: RemainingBudgetResponse = {
-      categoryId: category.id,
-      categoryName: category.name,
+      categoryId: categoryObj.id,
+      categoryName: categoryObj.name,
       budgeted: budgetedAmount,
       spent: spentAmount,
       balance

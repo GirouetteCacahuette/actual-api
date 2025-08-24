@@ -72,6 +72,16 @@ interface RemainingBudgetResponse {
   balance: number;
 }
 
+interface CategoryInfo {
+  id: string;
+  name: string;
+  balance: number;
+}
+
+interface CategoriesResponse {
+  categories: CategoryInfo[];
+}
+
 interface EnvironmentVariables {
     actualDataDir: string;
     password: string;
@@ -194,6 +204,41 @@ app.get('/api/budget', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error fetching remaining budget:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/categories', async (req: Request, res: Response) => {
+  try {
+    // Get all categories
+    const categories: Category[] = await getCategories();
+    
+    // Get current month's budget data to get balance information
+    const currentMonth = getCurrentMonth();
+    const budgetData = await getBudgetMonth(currentMonth);
+    
+    // Create a map of category balances from budget data
+    const categoryBalances = new Map<string, number>();
+    
+    for (const group of budgetData.categoryGroups) {
+      if (group.categories) {
+        for (const catBudget of group.categories) {
+          categoryBalances.set(catBudget.id, utils.integerToAmount(catBudget.balance));
+        }
+      }
+    }
+    
+    // Map categories with their balance information
+    const categoriesWithBalance: CategoryInfo[] = categories.map(category => ({
+      id: category.id,
+      name: category.name,
+      balance: categoryBalances.get(category.id) || 0
+    }));
+    
+    const response: CategoriesResponse = { categories: categoriesWithBalance };
+    res.json(response);
+  } catch (error) {
+    console.error('Error fetching categories:', error);
+    res.status(500).json({ error: 'Failed to fetch categories' });
   }
 });
 

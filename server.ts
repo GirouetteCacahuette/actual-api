@@ -1,5 +1,5 @@
 import express, { Request, Response } from 'express';
-import { init, getAccounts, downloadBudget, loadBudget, getBudgetMonth, getCategories, utils } from '@actual-app/api';
+import { init, getAccounts, downloadBudget, loadBudget, getBudgetMonth, getCategories, utils, addTransactions } from '@actual-app/api';
 
 const app = express();
 const PORT: number = 3000;
@@ -80,6 +80,21 @@ interface CategoryInfo {
 
 interface CategoriesResponse {
   categories: CategoryInfo[];
+}
+
+// Define TypeScript interfaces for transaction creation
+interface CreateTransactionRequest {
+  accountId: string;
+  date: string;
+  description: string;
+  amount: number;
+  categoryId: string;
+}
+
+interface TransactionResponse {
+  success: boolean;
+  message: string;
+  transactionId?: string;
 }
 
 interface EnvironmentVariables {
@@ -239,6 +254,65 @@ app.get('/api/categories', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error fetching categories:', error);
     res.status(500).json({ error: 'Failed to fetch categories' });
+  }
+});
+
+app.post('/api/transaction', async (req: Request, res: Response) => {
+  try {
+    const transactionData: CreateTransactionRequest = req.body;
+
+    // Validate required fields
+    if (!transactionData.accountId || !transactionData.date || !transactionData.description || 
+        transactionData.amount === undefined || !transactionData.categoryId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Missing required fields: accountId, date, description, amount, and categoryId are required' 
+      });
+    }
+
+    // Validate date format (YYYY-MM-DD)
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(transactionData.date)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid date format. Use YYYY-MM-DD format' 
+      });
+    }
+
+    // Validate amount is a number
+    if (typeof transactionData.amount !== 'number') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Amount must be a number' 
+      });
+    }
+
+    // Create transaction object for Actual API
+    const transaction = {
+      account: transactionData.accountId,
+      date: transactionData.date,
+      notes: transactionData.description,
+      amount: utils.amountToInteger(transactionData.amount),
+      category: transactionData.categoryId,
+      cleared: true
+    };
+
+    // Add transaction using Actual API
+    const transactionId = await addTransactions(transactionData.accountId, [transaction]);
+
+    const response: TransactionResponse = {
+      success: true,
+      message: 'Transaction created successfully',
+      transactionId: transactionId
+    };
+
+    res.status(201).json(response);
+  } catch (error) {
+    console.error('Error creating transaction:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to create transaction' 
+    });
   }
 });
 

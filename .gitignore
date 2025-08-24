@@ -143,3 +143,5 @@ start.local.sh
 
 # MacOS
 .DS_Store
+
+.idea

@@ -1,6 +1,7 @@
 import express, {Request, Response} from 'express';
 import {addTransactions, downloadBudget, getAccounts, getBudgetMonth, init, utils} from '@actual-app/api';
 import * as z from 'zod';
+import { Account, CategoryZ, BudgetMonth, CreateTransactionRequest, TransactionResponse, CategoryInfo, CategoriesResponse } from './src/models';
 
 const app = express();
 const PORT: number = 3000;
@@ -18,104 +19,6 @@ const logError = (prefix: string, message: string, error?: any, data?: any) => {
   }
 };
 
-// Zod schemas for Actual API data
-const Account = z.object({
-  id: z.string(),
-  name: z.string(),
-  type: z.string(),
-  balance: z.number(),
-  offbudget: z.boolean(),
-  closed: z.boolean()
-});
-
-const ExpenseCategory = z.object({
-    id: z.string(),
-    name: z.string(),
-    is_income: z.literal(false),
-    hidden: z.boolean(),
-    budgeted: z.number(),
-    spent: z.number(),
-    balance: z.number()
-})
-
-const RevenueCategory = z.object({
-    id: z.string(),
-    name: z.string(),
-    is_income: z.literal(true),
-    hidden: z.boolean(),
-    received: z.number()
-})
-
-const CategoryZ = z.discriminatedUnion("is_income",[ExpenseCategory, RevenueCategory]);
-
-const CategoryGroup = z.object({
-  id: z.string(),
-  name: z.string(),
-  categories: z.array(CategoryZ)
-});
-
-const BudgetMonth = z.object({
-  month: z.string(),
-  incomeAvailable: z.number(),
-  lastMonthOverspent: z.number(),
-  forNextMonth: z.number(),
-  totalBudgeted: z.number(),
-  toBudget: z.number(),
-  fromLastMonth: z.number(),
-  totalIncome: z.number(),
-  totalSpent: z.number(),
-  totalBalance: z.number(),
-  categoryGroups: z.array(CategoryGroup)
-});
-
-const CreateTransactionRequest = z.object({
-  accountId: z.string().min(1, "Account ID is required"),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format"),
-  description: z.string().min(1, "Description is required"),
-  amount: z.number().finite("Amount must be a valid number"),
-  categoryId: z.string().min(1, "Category ID is required")
-});
-
-const TransactionResponse = z.object({
-  success: z.boolean(),
-  message: z.string()
-});
-
-const RemainingBudgetResponse = z.object({
-  categoryId: z.string(),
-  categoryName: z.string(),
-  budgeted: z.number(),
-  spent: z.number(),
-  balance: z.number()
-});
-
-
-
-type CategoryInfo = ExpenseCategoryInfo | RevenueCategoryInfo
-
-type ExpenseCategoryInfo = {
-  id: string,
-  name: string,
-  balance: number
-};
-
-type RevenueCategoryInfo = {
-  id: string,
-  name: string,
-  received: number
-};
-
-type CategoriesResponse = {
-  categories: CategoryInfo[]
-}
-
-// Inferred TypeScript types from Zod schemas
-type Account = z.infer<typeof Account>;
-type CategoryZ = z.infer<typeof CategoryZ>;
-type TransactionResponse = z.infer<typeof TransactionResponse>;
-type RemainingBudgetResponse = z.infer<typeof RemainingBudgetResponse>;
-
-// Additional response types
 interface AccountsResponse {
   accounts: Account[];
 }
@@ -147,7 +50,6 @@ const getEnvironmentVariables = (): EnvironmentVariables => {
     return envVars;
 };
 
-// Helper function to get current month in YYYY-MM format
 const getCurrentMonth = (): string => {
   const now = new Date();
   const year = now.getFullYear();
@@ -177,7 +79,7 @@ app.get('/api/accounts', async (_, res: Response) => {
   try {
     const accountsData = await getAccounts();
     
-    const validationResult = z.array(Account).safeParse(accountsData);
+    const validationResult = z.array(AccountSchema).safeParse(accountsData);
     if (!validationResult.success) {
       logError('ZOD_VALIDATION', 'Accounts validation failed', validationResult.error, { rawData: accountsData });
       return res.status(500).json({ error: 'Invalid account data received from API' });
@@ -204,7 +106,7 @@ app.get('/api/budget', async (req: Request, res: Response) => {
     const currentMonth = getCurrentMonth();
     const budgetDataRaw = await getBudgetMonth(currentMonth);
     
-    const budgetValidation = BudgetMonth.safeParse(budgetDataRaw);
+    const budgetValidation = BudgetMonthSchema.safeParse(budgetDataRaw);
     if (!budgetValidation.success) {
       logError('ZOD_VALIDATION', 'Budget validation failed', budgetValidation.error, { rawData: budgetDataRaw });
       return res.status(500).json({ error: 'Invalid budget data received from API' });
@@ -212,7 +114,7 @@ app.get('/api/budget', async (req: Request, res: Response) => {
     
     const budgetData = budgetValidation.data;
 
-    let categoryBudget: CategoryZ | undefined;
+    let categoryBudget: z.infer<typeof CategoryZ> | undefined;
     
     for (const group of budgetData.categoryGroups) {
       if (group.categories && Array.isArray(group.categories)) {
@@ -233,7 +135,7 @@ app.get('/api/budget', async (req: Request, res: Response) => {
     const spentAmount = utils.integerToAmount(categoryBudget.spent);
     const balance = utils.integerToAmount(categoryBudget.balance);
 
-    const response: RemainingBudgetResponse = {
+    const response = {
       categoryId: categoryBudget.id,
       categoryName: categoryBudget.name,
       budgeted: budgetedAmount,
@@ -253,7 +155,7 @@ app.get('/api/categories', async (_, res: Response) => {
     const currentMonth = getCurrentMonth();
     const budgetDataRaw = await getBudgetMonth(currentMonth);
     
-    const budgetValidation = BudgetMonth.safeParse(budgetDataRaw);
+    const budgetValidation = BudgetMonthSchema.safeParse(budgetDataRaw);
     if (!budgetValidation.success) {
       logError('ZOD_VALIDATION', 'Budget validation failed', budgetValidation.error, { rawData: budgetDataRaw });
       return res.status(500).json({ error: 'Invalid budget data received from API' });
@@ -263,16 +165,15 @@ app.get('/api/categories', async (_, res: Response) => {
     
     const categoriesInfo: CategoryInfo[] = budgetData.categoryGroups.map(categoryGroup => {
         return categoryGroup.categories.map(category => (
-
         {
             id: category.id,
             name: category.name,
-            ...(category.is_income ? {received: utils.integerToAmount(category.received)} : {balance: utils.integerToAmount(category.balance)})
+            ...(category.is_income ? {received: utils.integerToAmount((category as any).received)} : {balance: utils.integerToAmount((category as any).balance)})
         }
         ))
     }).flat();
     
-    const response: CategoriesResponse = { categories: categoriesInfo };
+  const response: CategoriesResponse = { categories: categoriesInfo };
     res.json(response);
   } catch (error) {
     logError('ACTUAL_API', 'Error fetching categories', error);
@@ -282,7 +183,7 @@ app.get('/api/categories', async (_, res: Response) => {
 
 app.post('/api/transaction', async (req: Request, res: Response) => {
   try {
-    const validationResult = CreateTransactionRequest.safeParse(req.body);
+    const validationResult = CreateTransactionRequestSchema.safeParse(req.body);
     
     if (!validationResult.success) {
       logError('ZOD_VALIDATION', 'Transaction validation failed', validationResult.error, { requestBody: req.body });
@@ -306,7 +207,7 @@ app.post('/api/transaction', async (req: Request, res: Response) => {
 
     await addTransactions(transactionData.accountId, [transaction]);
 
-    const response: TransactionResponse = {
+    const response: z.infer<typeof TransactionResponseSchema> = {
       success: true,
       message: 'Transaction created successfully'
     };

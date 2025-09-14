@@ -10,12 +10,9 @@ const getEnvironmentVariables = (): { password: string; serverURL: string } => {
   const password: string | undefined = process.env.ACTUAL_PASSWORD;
   const serverURL: string | undefined = process.env.ACTUAL_SERVER_URL;
 
-  if (!password) {
-    throw new Error('ACTUAL_PASSWORD environment variable is required');
-  }
-
-  if (!serverURL) {
-    throw new Error('ACTUAL_SERVER_URL environment variable is required');
+  if (!password || !serverURL) {
+    console.error('Error: Required environment variables ACTUAL_PASSWORD and ACTUAL_SERVER_URL must be set.');
+    process.exit(1);
   }
 
   return { password, serverURL };

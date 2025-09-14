@@ -140,3 +140,6 @@ vite.config.ts.timestamp-*
 
 # Local start script with real values
 start.local.sh
+
+# MacOS
+.DS_Store

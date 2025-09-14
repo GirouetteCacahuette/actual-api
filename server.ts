@@ -189,7 +189,7 @@ app.get('/api/budget', async (req: Request, res: Response) => {
     let categoryBudget: CategoryBudget | undefined;
     
     for (const group of budgetData.categoryGroups) {
-      if (group.categories) {
+      if (group.categories && Array.isArray(group.categories)) {
         const found = group.categories.find(cat => cat.id === categoryObj.id);
         if (found) {
           categoryBudget = found;
@@ -235,7 +235,7 @@ app.get('/api/categories', async (req: Request, res: Response) => {
     const categoryBalances = new Map<string, number>();
     
     for (const group of budgetData.categoryGroups) {
-      if (group.categories) {
+      if (group.categories && Array.isArray(group.categories)) {
         for (const catBudget of group.categories) {
           categoryBalances.set(catBudget.id, utils.integerToAmount(catBudget.balance));
         }
@@ -298,12 +298,11 @@ app.post('/api/transaction', async (req: Request, res: Response) => {
     };
 
     // Add transaction using Actual API
-    const transactionId = await addTransactions(transactionData.accountId, [transaction]);
+    await addTransactions(transactionData.accountId, [transaction]);
 
     const response: TransactionResponse = {
       success: true,
       message: 'Transaction created successfully',
-      transactionId: transactionId
     };
 
     res.status(201).json(response);

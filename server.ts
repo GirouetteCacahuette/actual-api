@@ -1,100 +1,123 @@
-import express, { Request, Response } from 'express';
-import { init, getAccounts, downloadBudget, loadBudget, getBudgetMonth, getCategories, utils, addTransactions } from '@actual-app/api';
+import express, {Request, Response} from 'express';
+import {addTransactions, downloadBudget, getAccounts, getBudgetMonth, init, utils} from '@actual-app/api';
+import * as z from 'zod';
 
 const app = express();
 const PORT: number = 3000;
 
 app.use(express.json());
 
-// Define TypeScript interfaces for account data
-interface Account {
-  id: string;
-  name: string;
-  type: string;
-  balance: number;
-  offbudget: boolean;
-  closed: boolean;
-  sort_order: number;
+// Logging utility function for errors only
+const logError = (prefix: string, message: string, error?: any, data?: any) => {
+  const timestamp = new Date().toISOString();
+  const logMessage = `[${timestamp}] [ERROR] [${prefix}] ${message}`;
+  console.error(logMessage);
+  if(error) console.error('Error details:', error);
+  if (data !== undefined) {
+    console.error('Associated data:', JSON.stringify(data, null, 2));
+  }
+};
+
+// Zod schemas for Actual API data
+const Account = z.object({
+  id: z.string(),
+  name: z.string(),
+  type: z.string(),
+  balance: z.number(),
+  offbudget: z.boolean(),
+  closed: z.boolean()
+});
+
+const ExpenseCategory = z.object({
+    id: z.string(),
+    name: z.string(),
+    is_income: z.literal(false),
+    hidden: z.boolean(),
+    budgeted: z.number(),
+    spent: z.number(),
+    balance: z.number()
+})
+
+const RevenueCategory = z.object({
+    id: z.string(),
+    name: z.string(),
+    is_income: z.literal(true),
+    hidden: z.boolean(),
+    received: z.number()
+})
+
+const CategoryZ = z.discriminatedUnion("is_income",[ExpenseCategory, RevenueCategory]);
+
+const CategoryGroup = z.object({
+  id: z.string(),
+  name: z.string(),
+  categories: z.array(CategoryZ)
+});
+
+const BudgetMonth = z.object({
+  month: z.string(),
+  incomeAvailable: z.number(),
+  lastMonthOverspent: z.number(),
+  forNextMonth: z.number(),
+  totalBudgeted: z.number(),
+  toBudget: z.number(),
+  fromLastMonth: z.number(),
+  totalIncome: z.number(),
+  totalSpent: z.number(),
+  totalBalance: z.number(),
+  categoryGroups: z.array(CategoryGroup)
+});
+
+const CreateTransactionRequest = z.object({
+  accountId: z.string().min(1, "Account ID is required"),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format"),
+  description: z.string().min(1, "Description is required"),
+  amount: z.number().finite("Amount must be a valid number"),
+  categoryId: z.string().min(1, "Category ID is required")
+});
+
+const TransactionResponse = z.object({
+  success: z.boolean(),
+  message: z.string()
+});
+
+const RemainingBudgetResponse = z.object({
+  categoryId: z.string(),
+  categoryName: z.string(),
+  budgeted: z.number(),
+  spent: z.number(),
+  balance: z.number()
+});
+
+
+
+type CategoryInfo = ExpenseCategoryInfo | RevenueCategoryInfo
+
+type ExpenseCategoryInfo = {
+  id: string,
+  name: string,
+  balance: number
+};
+
+type RevenueCategoryInfo = {
+  id: string,
+  name: string,
+  received: number
+};
+
+type CategoriesResponse = {
+  categories: CategoryInfo[]
 }
 
+// Inferred TypeScript types from Zod schemas
+type Account = z.infer<typeof Account>;
+type CategoryZ = z.infer<typeof CategoryZ>;
+type TransactionResponse = z.infer<typeof TransactionResponse>;
+type RemainingBudgetResponse = z.infer<typeof RemainingBudgetResponse>;
+
+// Additional response types
 interface AccountsResponse {
   accounts: Account[];
-}
-
-// Define TypeScript interfaces for budget data
-interface Budget {
-  id: string;
-  name: string;
-  encrypted: boolean;
-}
-
-// Define TypeScript interfaces for category and budget data
-interface Category {
-  id: string;
-  name: string;
-  group_id: string;
-  is_income: boolean;
-  sort_order: number;
-}
-
-interface CategoryBudget {
-  id: string;
-  budgeted: number;
-  spent: number;
-  balance: number;
-}
-
-interface CategoryGroup {
-  id: string;
-  name: string;
-  categories: CategoryBudget[];
-}
-
-interface BudgetMonth {
-  month: string;
-  incomeAvailable: number;
-  lastMonthOverspent: number;
-  forNextMonth: number;
-  totalBudgeted: number;
-  toBudget: number;
-  fromLastMonth: number;
-  totalIncome: number;
-  totalSpent: number;
-  totalBalance: number;
-  categoryGroups: CategoryGroup[];
-}
-
-interface RemainingBudgetResponse {
-  categoryId: string;
-  categoryName: string;
-  budgeted: number;
-  spent: number;
-  balance: number;
-}
-
-interface CategoryInfo {
-  id: string;
-  name: string;
-  balance: number;
-}
-
-interface CategoriesResponse {
-  categories: CategoryInfo[];
-}
-
-// Define TypeScript interfaces for transaction creation
-interface CreateTransactionRequest {
-  accountId: string;
-  date: string;
-  description: string;
-  amount: number;
-  categoryId: string;
-}
-
-interface TransactionResponse {
-  success: boolean;
-  message: string;
-  transactionId?: string;
 }
 
 interface EnvironmentVariables {
@@ -116,7 +139,7 @@ const getEnvironmentVariables = (): EnvironmentVariables => {
 
     for (const [key, value] of Object.entries(envVars)) {
         if (!value) {
-            console.error(`Error: Required environment variable ${key} must be set.`);
+            logError('ENV', `Required environment variable ${key} must be set`, new Error('Missing environment variable'), { key });
             process.exit(1);
         }
     }
@@ -142,55 +165,58 @@ const getCurrentMonth = (): string => {
       password: password,
     });
 
-    console.log('Actual API initialized successfully');
-
-    // Download the budget
     await downloadBudget(syncId, {password: budgetEncryptionKey});
+    
   } catch (error) {
-    console.error('Error during server initialization:', error);
+    logError('INIT', 'Error during server initialization', error, { serverURL: process.env.ACTUAL_SERVER_URL, dataDir: process.env.ACTUAL_DATA_DIR || './cache/actual-data', syncId: process.env.ACTUAL_SYNC_ID });
     process.exit(1);
   }
 })();
 
-app.get('/api/accounts', async (req: Request, res: Response) => {
+app.get('/api/accounts', async (_, res: Response) => {
   try {
-    const accounts: Account[] = await getAccounts();
+    const accountsData = await getAccounts();
+    
+    const validationResult = z.array(Account).safeParse(accountsData);
+    if (!validationResult.success) {
+      logError('ZOD_VALIDATION', 'Accounts validation failed', validationResult.error, { rawData: accountsData });
+      return res.status(500).json({ error: 'Invalid account data received from API' });
+    }
+    
+    const accounts = validationResult.data;
     const response: AccountsResponse = { accounts };
     res.json(response);
   } catch (error) {
-    console.error('Error fetching accounts:', error);
+    logError('ACTUAL_API', 'Error fetching accounts', error);
     res.status(500).json({ error: 'Failed to fetch accounts' });
   }
 });
 
 app.get('/api/budget', async (req: Request, res: Response) => {
-  const { category } = req.query;
+  const { categoryName } = req.query;
 
-  if (!category || typeof category !== 'string') {
+  if (!categoryName || typeof categoryName !== 'string') {
+    logError('VALIDATION', 'Missing or invalid category query parameter', new Error('Invalid category parameter'), { categoryName, query: req.query });
     return res.status(400).json({ error: 'category query parameter is required and must be a string' });
   }
 
   try {
-    // Fetch all categories to find the category by name
-    const categories: Category[] = await getCategories();
-    const categoryObj = categories.find(cat => cat.name.toLowerCase() === category.toLowerCase());
-
-    if (!categoryObj) {
-      return res.status(404).json({ error: 'Category not found' });
-    }
-
-    // Get the current month in 'YYYY-MM' format
     const currentMonth = getCurrentMonth();
+    const budgetDataRaw = await getBudgetMonth(currentMonth);
+    
+    const budgetValidation = BudgetMonth.safeParse(budgetDataRaw);
+    if (!budgetValidation.success) {
+      logError('ZOD_VALIDATION', 'Budget validation failed', budgetValidation.error, { rawData: budgetDataRaw });
+      return res.status(500).json({ error: 'Invalid budget data received from API' });
+    }
+    
+    const budgetData = budgetValidation.data;
 
-    // Fetch budget data for the current month
-    const budgetData = await getBudgetMonth(currentMonth);
-
-    // Find the budget entry for the specified category by searching through all category groups
-    let categoryBudget: CategoryBudget | undefined;
+    let categoryBudget: CategoryZ | undefined;
     
     for (const group of budgetData.categoryGroups) {
       if (group.categories && Array.isArray(group.categories)) {
-        const found = group.categories.find(cat => cat.id === categoryObj.id);
+        const found = group.categories.find(cat => cat.name === categoryName);
         if (found) {
           categoryBudget = found;
           break;
@@ -198,18 +224,18 @@ app.get('/api/budget', async (req: Request, res: Response) => {
       }
     }
 
-    if (!categoryBudget) {
-      return res.status(404).json({ error: 'Budget data for category not found' });
+    if (!categoryBudget || categoryBudget.is_income) {
+      logError('VALIDATION', `Budget data not found for category ${categoryName}`);
+      return res.status(404).json({ error: `Budget data for category ${categoryName} not found` });
     }
 
-    // Calculate remaining budget
     const budgetedAmount = utils.integerToAmount(categoryBudget.budgeted);
     const spentAmount = utils.integerToAmount(categoryBudget.spent);
     const balance = utils.integerToAmount(categoryBudget.balance);
 
     const response: RemainingBudgetResponse = {
-      categoryId: categoryObj.id,
-      categoryName: categoryObj.name,
+      categoryId: categoryBudget.id,
+      categoryName: categoryBudget.name,
       budgeted: budgetedAmount,
       spent: spentAmount,
       balance
@@ -217,77 +243,58 @@ app.get('/api/budget', async (req: Request, res: Response) => {
 
     res.json(response);
   } catch (error) {
-    console.error('Error fetching remaining budget:', error);
+    logError('ACTUAL_API', 'Error fetching budget data', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-app.get('/api/categories', async (req: Request, res: Response) => {
+app.get('/api/categories', async (_, res: Response) => {
   try {
-    // Get all categories
-    const categories: Category[] = await getCategories();
-    
-    // Get current month's budget data to get balance information
     const currentMonth = getCurrentMonth();
-    const budgetData = await getBudgetMonth(currentMonth);
+    const budgetDataRaw = await getBudgetMonth(currentMonth);
     
-    // Create a map of category balances from budget data
-    const categoryBalances = new Map<string, number>();
-    
-    for (const group of budgetData.categoryGroups) {
-      if (group.categories && Array.isArray(group.categories)) {
-        for (const catBudget of group.categories) {
-          categoryBalances.set(catBudget.id, utils.integerToAmount(catBudget.balance));
-        }
-      }
+    const budgetValidation = BudgetMonth.safeParse(budgetDataRaw);
+    if (!budgetValidation.success) {
+      logError('ZOD_VALIDATION', 'Budget validation failed', budgetValidation.error, { rawData: budgetDataRaw });
+      return res.status(500).json({ error: 'Invalid budget data received from API' });
     }
     
-    // Map categories with their balance information
-    const categoriesWithBalance: CategoryInfo[] = categories.map(category => ({
-      id: category.id,
-      name: category.name,
-      balance: categoryBalances.get(category.id) || 0
-    }));
+    const budgetData = budgetValidation.data;
     
-    const response: CategoriesResponse = { categories: categoriesWithBalance };
+    const categoriesInfo: CategoryInfo[] = budgetData.categoryGroups.map(categoryGroup => {
+        return categoryGroup.categories.map(category => (
+
+        {
+            id: category.id,
+            name: category.name,
+            ...(category.is_income ? {received: utils.integerToAmount(category.received)} : {balance: utils.integerToAmount(category.balance)})
+        }
+        ))
+    }).flat();
+    
+    const response: CategoriesResponse = { categories: categoriesInfo };
     res.json(response);
   } catch (error) {
-    console.error('Error fetching categories:', error);
+    logError('ACTUAL_API', 'Error fetching categories', error);
     res.status(500).json({ error: 'Failed to fetch categories' });
   }
 });
 
 app.post('/api/transaction', async (req: Request, res: Response) => {
   try {
-    const transactionData: CreateTransactionRequest = req.body;
-
-    // Validate required fields
-    if (!transactionData.accountId || !transactionData.date || !transactionData.description || 
-        transactionData.amount === undefined || !transactionData.categoryId) {
+    const validationResult = CreateTransactionRequest.safeParse(req.body);
+    
+    if (!validationResult.success) {
+      logError('ZOD_VALIDATION', 'Transaction validation failed', validationResult.error, { requestBody: req.body });
       return res.status(400).json({ 
         success: false, 
-        message: 'Missing required fields: accountId, date, description, amount, and categoryId are required' 
+        message: 'Validation failed',
+        errors: validationResult.error.issues
       });
     }
 
-    // Validate date format (YYYY-MM-DD)
-    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-    if (!dateRegex.test(transactionData.date)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Invalid date format. Use YYYY-MM-DD format' 
-      });
-    }
+    const transactionData = validationResult.data;
 
-    // Validate amount is a number
-    if (typeof transactionData.amount !== 'number') {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Amount must be a number' 
-      });
-    }
-
-    // Create transaction object for Actual API
     const transaction = {
       account: transactionData.accountId,
       date: transactionData.date,
@@ -297,17 +304,16 @@ app.post('/api/transaction', async (req: Request, res: Response) => {
       cleared: true
     };
 
-    // Add transaction using Actual API
     await addTransactions(transactionData.accountId, [transaction]);
 
     const response: TransactionResponse = {
       success: true,
-      message: 'Transaction created successfully',
+      message: 'Transaction created successfully'
     };
 
     res.status(201).json(response);
   } catch (error) {
-    console.error('Error creating transaction:', error);
+    logError('ACTUAL_API', 'Error creating transaction', error, { requestBody: req.body });
     res.status(500).json({ 
       success: false, 
       message: 'Failed to create transaction' 

@@ -1,5 +1,5 @@
 import express, { Request, Response } from 'express';
-import { init, getAccounts, downloadBudget, loadBudget } from '@actual-app/api';
+import { init, getAccounts, downloadBudget, loadBudget, getBudgetMonth, getCategories, utils } from '@actual-app/api';
 
 const app = express();
 const PORT: number = 3000;
@@ -28,6 +28,50 @@ interface Budget {
   encrypted: boolean;
 }
 
+// Define TypeScript interfaces for category and budget data
+interface Category {
+  id: string;
+  name: string;
+  group_id: string;
+  is_income: boolean;
+  sort_order: number;
+}
+
+interface CategoryBudget {
+  id: string;
+  budgeted: number;
+  spent: number;
+  balance: number;
+}
+
+interface CategoryGroup {
+  id: string;
+  name: string;
+  categories: CategoryBudget[];
+}
+
+interface BudgetMonth {
+  month: string;
+  incomeAvailable: number;
+  lastMonthOverspent: number;
+  forNextMonth: number;
+  totalBudgeted: number;
+  toBudget: number;
+  fromLastMonth: number;
+  totalIncome: number;
+  totalSpent: number;
+  totalBalance: number;
+  categoryGroups: CategoryGroup[];
+}
+
+interface RemainingBudgetResponse {
+  categoryId: string;
+  categoryName: string;
+  budgeted: number;
+  spent: number;
+  balance: number;
+}
+
 interface EnvironmentVariables {
     actualDataDir: string;
     password: string;
@@ -53,6 +97,14 @@ const getEnvironmentVariables = (): EnvironmentVariables => {
     }
     
     return envVars;
+};
+
+// Helper function to get current month in YYYY-MM format
+const getCurrentMonth = (): string => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
 };
 
 (async () => {
@@ -83,6 +135,61 @@ app.get('/api/accounts', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error fetching accounts:', error);
     res.status(500).json({ error: 'Failed to fetch accounts' });
+  }
+});
+
+app.get('/api/category/:categoryName/budget', async (req: Request, res: Response) => {
+  const { categoryName } = req.params;
+
+  try {
+    // Fetch all categories to find the category by name
+    const categories: Category[] = await getCategories();
+    const category = categories.find(cat => cat.name.toLowerCase() === categoryName.toLowerCase());
+
+    if (!category) {
+      return res.status(404).json({ error: 'Category not found' });
+    }
+
+    // Get the current month in 'YYYY-MM' format
+    const currentMonth = getCurrentMonth();
+
+    // Fetch budget data for the current month
+    const budgetData = await getBudgetMonth(currentMonth);
+
+    // Find the budget entry for the specified category by searching through all category groups
+    let categoryBudget: CategoryBudget | undefined;
+    
+    for (const group of budgetData.categoryGroups) {
+      if (group.categories) {
+        const found = group.categories.find(cat => cat.id === category.id);
+        if (found) {
+          categoryBudget = found;
+          break;
+        }
+      }
+    }
+
+    if (!categoryBudget) {
+      return res.status(404).json({ error: 'Budget data for category not found' });
+    }
+
+    // Calculate remaining budget
+    const budgetedAmount = utils.integerToAmount(categoryBudget.budgeted);
+    const spentAmount = utils.integerToAmount(categoryBudget.spent);
+    const balance = utils.integerToAmount(categoryBudget.balance);
+
+    const response: RemainingBudgetResponse = {
+      categoryId: category.id,
+      categoryName: category.name,
+      budgeted: budgetedAmount,
+      spent: spentAmount,
+      balance
+    };
+
+    res.json(response);
+  } catch (error) {
+    console.error('Error fetching remaining budget:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

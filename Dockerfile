@@ -1,0 +1,27 @@
+FROM node:25-alpine
+
+WORKDIR /app
+
+COPY package.json .
+COPY yarn.lock .
+
+RUN apk add --update python3 make g++\
+   && rm -rf /var/cache/apk/*
+
+RUN yarn install
+
+COPY --chown=node:node . .
+
+RUN yarn build
+
+RUN mkdir data
+
+EXPOSE 3000
+
+#ENV ACTUAL_PASSWORD=""
+#ENV ACTUAL_SERVER_URL=""
+#ENV ACTUAL_SYNC_ID=""
+#ENV ACTUAL_BUDGET_ENCRYPTION_KEY=""
+#ENV ACTUAL_DATA_DIR="./data"
+
+CMD ["node", "dist/server.js"]

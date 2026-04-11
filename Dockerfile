@@ -7,8 +7,6 @@ COPY yarn.lock .
 
 RUN apk add --no-cache --virtual .build-deps python3 make g++
 
-RUN corepack enable
-
 RUN yarn install --frozen-lockfile
 
 COPY --chown=node:node . .

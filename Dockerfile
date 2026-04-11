@@ -5,8 +5,7 @@ WORKDIR /app
 COPY package.json .
 COPY yarn.lock .
 
-RUN apk add --update python3 make g++\
-   && rm -rf /var/cache/apk/*
+RUN apk add --no-cache --virtual .build-deps python3 make g++
 
 RUN corepack enable
 
@@ -15,6 +14,8 @@ RUN yarn install --frozen-lockfile
 COPY --chown=node:node . .
 
 RUN yarn build
+
+RUN apk del .build-deps
 
 RUN mkdir data && chown -R node:node data
 

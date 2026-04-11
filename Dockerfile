@@ -1,4 +1,4 @@
-FROM node:25-alpine
+FROM node:25.9.0-alpine3.23
 
 WORKDIR /app
 
@@ -14,7 +14,7 @@ COPY --chown=node:node . .
 
 RUN yarn build
 
-RUN mkdir data
+RUN mkdir data && chown -R node:node data
 
 EXPOSE 3000
 
@@ -23,5 +23,7 @@ EXPOSE 3000
 #ENV ACTUAL_SYNC_ID=""
 #ENV ACTUAL_BUDGET_ENCRYPTION_KEY=""
 #ENV ACTUAL_DATA_DIR="./data"
+
+USER node
 
 CMD ["node", "dist/server.js"]

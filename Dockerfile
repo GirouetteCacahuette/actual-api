@@ -8,7 +8,9 @@ COPY yarn.lock .
 RUN apk add --update python3 make g++\
    && rm -rf /var/cache/apk/*
 
-RUN yarn install
+RUN corepack enable
+
+RUN yarn install --frozen-lockfile
 
 COPY --chown=node:node . .
 

@@ -45,4 +45,4 @@ export type RevenueCategoryInfo = {
 
 export type CategoryInfo = ExpenseCategoryInfo | RevenueCategoryInfo
 
-export type CategoriesResponse = { categories: CategoryInfo[] }
+export type CategoriesResponse = Record<string,CategoryInfo>

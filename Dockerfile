@@ -4,12 +4,13 @@ WORKDIR /app
 
 COPY package.json .
 COPY yarn.lock .
+COPY server.ts .
+COPY src ./src
+COPY tsconfig.json .
 
 RUN apk add --no-cache --virtual .build-deps python3 make g++
 
 RUN yarn install --frozen-lockfile
-
-COPY --chown=node:node . .
 
 RUN yarn build
 

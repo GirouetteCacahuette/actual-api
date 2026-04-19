@@ -15,7 +15,6 @@ import {
     CreateTransactionRequestSchema,
     AccountsResponse,
     TransactionResponse,
-    CategoryInfo,
     CategoriesResponse,
     BudgetMonth,
     CategoryBudget,
@@ -28,7 +27,9 @@ const app = express()
 const PORT: number = 3000
 
 app.use(express.json())
-app.use(async (req: Request, res: Response, next: NextFunction) => {
+app.use(async (req: Request, _: Response, next: NextFunction) => {
+    console.log(`${new Date().toISOString()} ${req.method} ${req.path} with query ${req.query.toString()}`)
+
     await sync()
     next()
 })
@@ -230,7 +231,9 @@ app.get(
     }
 )
 
-app.get('/api/categories', async (_, res: Response) => {
+app.get('/api/categories', async (req, res: Response) => {
+    const { filter } = req.query
+
     try {
         const currentMonth = getCurrentMonth()
         const budgetDataRaw = await getBudgetMonth(currentMonth)
@@ -250,28 +253,31 @@ app.get('/api/categories', async (_, res: Response) => {
 
         const budgetData = budgetValidation.data
 
-        const categoriesInfo: CategoryInfo[] = budgetData.categoryGroups
-            .map((categoryGroup) => {
-                return categoryGroup.categories.map((category) => ({
-                    id: category.id,
-                    name: category.name,
-                    ...(category.is_income
-                        ? {
-                              received: utils.integerToAmount(
-                                  (category as any).received
-                              ),
-                          }
-                        : {
-                              balance: utils.integerToAmount(
-                                  (category as any).balance
-                              ),
-                          }),
-                }))
-            })
-            .flat()
+        const categoriesInfo : CategoriesResponse = {}
 
-        const response: CategoriesResponse = { categories: categoriesInfo }
-        res.json(response)
+        for (const categoryGroup of budgetData.categoryGroups) {
+            for (const category of categoryGroup.categories) {
+                if(!filter || typeof filter === 'string' && filter.toLowerCase().includes(category.name.toLowerCase())) {
+                    categoriesInfo[category.name.replace(" ", "_")] = {
+                        id: category.id,
+                        name: category.name,
+                        ...(category.is_income
+                            ? {
+                                  received: utils.integerToAmount(
+                                      (category as any).received
+                                  ),
+                              }
+                            : {
+                                  balance: utils.integerToAmount(
+                                      (category as any).balance
+                                  ),
+                              }),
+                    }
+                }
+            }
+        }
+
+        res.json(categoriesInfo)
     } catch (error) {
         logError('ACTUAL_API', 'Error fetching categories', error)
         res.status(500).json({ error: 'Failed to fetch categories' })

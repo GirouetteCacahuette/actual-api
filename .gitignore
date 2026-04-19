@@ -145,3 +145,6 @@ start.local.sh
 .DS_Store
 
 .idea
+
+# Local docker compose file
+docker-compose-local.yml

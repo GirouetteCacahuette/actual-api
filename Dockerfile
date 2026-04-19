@@ -15,7 +15,7 @@ RUN yarn build
 
 RUN apk del .build-deps
 
-RUN mkdir data && chown -R node:node data
+RUN mkdir data
 
 EXPOSE 3000
 
@@ -24,7 +24,5 @@ EXPOSE 3000
 #ENV ACTUAL_SYNC_ID=""
 #ENV ACTUAL_BUDGET_ENCRYPTION_KEY=""
 #ENV ACTUAL_DATA_DIR="./data"
-
-USER node
 
 CMD ["node", "dist/server.js"]

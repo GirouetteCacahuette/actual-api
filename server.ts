@@ -100,6 +100,7 @@ const getCurrentMonth = (): string => {
             serverURL: process.env.ACTUAL_SERVER_URL,
             dataDir: process.env.ACTUAL_DATA_DIR || './cache/actual-data',
             syncId: process.env.ACTUAL_SYNC_ID,
+            password: process.env.ACTUAL_PASSWORD,
         })
         process.exit(1)
     }

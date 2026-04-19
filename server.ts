@@ -1,15 +1,15 @@
-import express, { Request, Response } from 'express'
+import express, { NextFunction, Request, Response } from 'express'
 import {
     addTransactions,
-    downloadBudget,
+    downloadBudget, getAccountBalance,
     getAccounts,
     getBudgetMonth,
-    init,
+    init, sync,
     utils,
 } from '@actual-app/api'
 import * as z from 'zod'
 import {
-    Account,
+    ApiAccount,
     CategoryZ,
     BudgetMonthSchema,
     CreateTransactionRequestSchema,
@@ -19,6 +19,7 @@ import {
     CategoriesResponse,
     BudgetMonth,
     CategoryBudget,
+    Account,
 } from './src/models'
 
 type ErrorResponseBody = { error: string }
@@ -27,6 +28,10 @@ const app = express()
 const PORT: number = 3000
 
 app.use(express.json())
+app.use(async (req: Request, res: Response, next: NextFunction) => {
+    await sync()
+    next()
+})
 
 // Logging utility function for errors only
 const logError = (prefix: string, message: string, error?: any, data?: any) => {
@@ -110,12 +115,12 @@ app.get('/api/accounts', async (_, res: Response) => {
     try {
         const accountsData = await getAccounts()
 
-        const validationResult = z.array(Account).safeParse(accountsData)
+        const validationResult = z.array(ApiAccount).safeParse(accountsData)
         if (!validationResult.success) {
             logError(
                 'ZOD_VALIDATION',
                 'Accounts validation failed',
-                validationResult.error,
+                validationResult.error.toString(),
                 { rawData: accountsData }
             )
             return res
@@ -123,7 +128,16 @@ app.get('/api/accounts', async (_, res: Response) => {
                 .json({ error: 'Invalid account data received from API' })
         }
 
-        const accounts = validationResult.data
+        const accounts :Account[] = []
+
+        for (const apiAccount of validationResult.data) {
+            const balance = await getAccountBalance(apiAccount.id)/100
+            accounts.push({
+                ...apiAccount,
+                balance
+            })
+        }
+
         const response: AccountsResponse = { accounts }
         res.json(response)
     } catch (error) {

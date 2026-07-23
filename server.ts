@@ -1,10 +1,14 @@
 import express, { NextFunction, Request, Response } from 'express'
 import {
-    addTransactions,
-    downloadBudget, getAccountBalance,
+    downloadBudget,
+    getAccountBalance,
     getAccounts,
     getBudgetMonth,
-    init, sync,
+    importTransactions,
+    init,
+    q,
+    runQuery,
+    sync,
     utils,
 } from '@actual-app/api'
 import * as z from 'zod'
@@ -13,8 +17,12 @@ import {
     CategoryZ,
     BudgetMonthSchema,
     CreateTransactionRequestSchema,
+    GetTransactionsQuerySchema,
+    ImportTransactionsResultSchema,
     AccountsResponse,
-    TransactionResponse,
+    CreateTransactionResponse,
+    GetTransactionsResponse,
+    TransactionRecord,
     CategoriesResponse,
     BudgetMonth,
     CategoryBudget,
@@ -28,7 +36,9 @@ const PORT: number = 3000
 
 app.use(express.json())
 app.use(async (req: Request, _: Response, next: NextFunction) => {
-    console.log(`${new Date().toISOString()} ${req.method} ${req.path} with query ${req.query.toString()}`)
+    console.log(
+        `${new Date().toISOString()} ${req.method} ${req.path} with query ${req.query.toString()}`
+    )
 
     await sync()
     next()
@@ -129,13 +139,13 @@ app.get('/api/accounts', async (_, res: Response) => {
                 .json({ error: 'Invalid account data received from API' })
         }
 
-        const accounts :Account[] = []
+        const accounts: Account[] = []
 
         for (const apiAccount of validationResult.data) {
-            const balance = await getAccountBalance(apiAccount.id)/100
+            const balance = (await getAccountBalance(apiAccount.id)) / 100
             accounts.push({
                 ...apiAccount,
-                balance
+                balance,
             })
         }
 
@@ -253,12 +263,18 @@ app.get('/api/categories', async (req, res: Response) => {
 
         const budgetData = budgetValidation.data
 
-        const categoriesInfo : CategoriesResponse = {}
+        const categoriesInfo: CategoriesResponse = {}
 
         for (const categoryGroup of budgetData.categoryGroups) {
             for (const category of categoryGroup.categories) {
-                if(!filter || typeof filter === 'string' && filter.toLowerCase().includes(category.name.toLowerCase())) {
-                    categoriesInfo[category.name.replace(" ", "_")] = {
+                if (
+                    !filter ||
+                    (typeof filter === 'string' &&
+                        filter
+                            .toLowerCase()
+                            .includes(category.name.toLowerCase()))
+                ) {
+                    categoriesInfo[category.name.replace(' ', '_')] = {
                         id: category.id,
                         name: category.name,
                         ...(category.is_income
@@ -284,7 +300,7 @@ app.get('/api/categories', async (req, res: Response) => {
     }
 })
 
-app.post('/api/transaction', async (req: Request, res: Response) => {
+app.post('/api/transactions', async (req: Request, res: Response) => {
     try {
         const validationResult = CreateTransactionRequestSchema.safeParse(
             req.body
@@ -306,20 +322,61 @@ app.post('/api/transaction', async (req: Request, res: Response) => {
 
         const transactionData = validationResult.data
 
+        // amount is integer cents, passed through with no conversion.
+        // Actual owns idempotency via imported_id through importTransactions.
         const transaction = {
             account: transactionData.accountId,
             date: transactionData.date,
-            notes: transactionData.description,
-            amount: utils.amountToInteger(transactionData.amount),
+            amount: transactionData.amount,
+            imported_id: transactionData.imported_id,
+            payee_name: transactionData.payee_name,
+            notes: transactionData.notes,
             category: transactionData.categoryId,
-            cleared: true,
+            cleared: transactionData.cleared,
         }
 
-        await addTransactions(transactionData.accountId, [transaction])
+        const importResultRaw = await importTransactions(
+            transactionData.accountId,
+            [transaction]
+        )
 
-        const response: TransactionResponse = {
+        const importValidation =
+            ImportTransactionsResultSchema.safeParse(importResultRaw)
+        if (!importValidation.success) {
+            logError(
+                'ZOD_VALIDATION',
+                'importTransactions result validation failed',
+                importValidation.error,
+                { rawResult: importResultRaw }
+            )
+            return res.status(500).json({
+                success: false,
+                message: 'Invalid result received from importTransactions',
+            })
+        }
+
+        const importResult = importValidation.data
+
+        if (importResult.errors && importResult.errors.length > 0) {
+            logError(
+                'ACTUAL_API',
+                'importTransactions reported errors',
+                importResult.errors,
+                { requestBody: req.body }
+            )
+            return res.status(500).json({
+                success: false,
+                message: 'Failed to import transaction',
+            })
+        }
+
+        // Confirm the import is persisted on the server before responding 201.
+        await sync()
+
+        const response: CreateTransactionResponse = {
             success: true,
-            message: 'Transaction created successfully',
+            added: importResult.added,
+            updated: importResult.updated,
         }
 
         res.status(201).json(response)
@@ -331,6 +388,66 @@ app.post('/api/transaction', async (req: Request, res: Response) => {
             success: false,
             message: 'Failed to create transaction',
         })
+    }
+})
+
+app.get('/api/transactions', async (req: Request, res: Response) => {
+    try {
+        const validationResult = GetTransactionsQuerySchema.safeParse(req.query)
+
+        if (!validationResult.success) {
+            logError(
+                'ZOD_VALIDATION',
+                'Transaction query validation failed',
+                validationResult.error,
+                { query: req.query }
+            )
+            return res.status(400).json({
+                error: 'Provide exactly one of imported_id or imported_id_prefix',
+            })
+        }
+
+        const { imported_id, imported_id_prefix } = validationResult.data
+
+        const filter = imported_id
+            ? { imported_id }
+            : { imported_id: { $like: `${imported_id_prefix}%` } }
+
+        const query = q('transactions')
+            .filter(filter)
+            .select([
+                'id',
+                'account',
+                'date',
+                'amount',
+                'notes',
+                'imported_id',
+                'cleared',
+                'category',
+                { payee_name: 'payee.name' },
+            ])
+
+        const { data } = (await runQuery(query)) as { data: any[] }
+
+        const transactions: TransactionRecord[] = data.map((t) => ({
+            id: t.id,
+            accountId: t.account,
+            date: t.date,
+            amount: t.amount,
+            payee_name: t.payee_name ?? null,
+            notes: t.notes ?? null,
+            imported_id: t.imported_id ?? null,
+            cleared: Boolean(t.cleared),
+            category: t.category ?? null,
+        }))
+
+        const response: GetTransactionsResponse = transactions
+        res.json(response)
+    } catch (error) {
+        logError('ACTUAL_API', 'Error fetching transactions', error, {
+            query: req.query,
+        })
+        res.status(500).json({ error: 'Failed to fetch transactions' })
     }
 })
 

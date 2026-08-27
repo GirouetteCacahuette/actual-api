@@ -38,7 +38,7 @@ const PORT: number = 3000
 app.use(express.json())
 app.use(async (req: Request, _: Response, next: NextFunction) => {
     console.log(
-        `${new Date().toISOString()} ${req.method} ${req.path} with query ${req.query.toString()}`
+        `${new Date().toISOString()} ${req.method} ${req.path} with query ${JSON.stringify(req.query)} and body ${JSON.stringify(req.body)}`
     )
 
     await sync()

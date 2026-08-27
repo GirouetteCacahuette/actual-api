@@ -9,6 +9,7 @@ import {
     q,
     runQuery,
     sync,
+    updateTransaction,
     utils,
 } from '@actual-app/api'
 import * as z from 'zod'
@@ -370,13 +371,59 @@ app.post('/api/transactions', async (req: Request, res: Response) => {
             })
         }
 
-        // Confirm the import is persisted on the server before responding 201.
+        // importTransactions is insert-or-ignore by imported_id: when a
+        // transaction with this imported_id already exists it matches and
+        // discards the incoming data (no field diffing), so a re-POST with a
+        // changed amount/notes is a no-op. To deliver upsert semantics from a
+        // single write endpoint, detect that case and apply the update
+        // explicitly via updateTransaction.
+        let updated = importResult.updated
+        if (importResult.added.length === 0) {
+            const existingQuery = q('transactions')
+                .filter({
+                    imported_id: transactionData.imported_id,
+                    account: transactionData.accountId,
+                })
+                .select(['id'])
+
+            const { data: existing } = (await runQuery(existingQuery)) as {
+                data: Array<{ id: string }>
+            }
+
+            if (existing.length > 0) {
+                // updateTransaction writes real transaction columns only, so
+                // payee is not updated here: it is an id column and the client
+                // only has payee_name. Actual resolves payee_name -> payee on
+                // create (via importTransactions); for a given imported_id the
+                // payee is stable, so leaving it untouched on update is correct.
+                const updateFields: Record<string, unknown> = {
+                    date: transactionData.date,
+                    amount: transactionData.amount,
+                    cleared: transactionData.cleared,
+                }
+                if (transactionData.notes !== undefined) {
+                    updateFields.notes = transactionData.notes
+                }
+                if (transactionData.categoryId !== undefined) {
+                    updateFields.category = transactionData.categoryId
+                }
+
+                for (const { id } of existing) {
+                    await updateTransaction(id, updateFields)
+                }
+
+                updated = [...updated, ...existing.map((t) => t.id)]
+            }
+        }
+
+        // Confirm the import/update is persisted on the server before
+        // responding 201.
         await sync()
 
         const response: CreateTransactionResponse = {
             success: true,
             added: importResult.added,
-            updated: importResult.updated,
+            updated,
         }
 
         res.status(201).json(response)

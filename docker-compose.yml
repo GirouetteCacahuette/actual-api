@@ -4,7 +4,7 @@ services:
     ports:
       # This line makes Actual available at port 5006 of the device you run the server on,
       # i.e. http://localhost:5006. You can change the first number to change the port, if you want.
-      - '5618:5006'
+      - '6318:5006'
     # environment:
       # Uncomment any of the lines below to set configuration options.
       # - ACTUAL_HTTPS_KEY=/data/umbrel.tail1bd6b.ts.net.key
@@ -32,7 +32,7 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - '5619:3000'
+      - '6319:3000'
     environment:
       - ACTUAL_SERVER_URL=http://actual_server:5006
       - ACTUAL_PASSWORD=[PASSWORD]

@@ -35,9 +35,9 @@ services:
       - '6319:3000'
     environment:
       - ACTUAL_SERVER_URL=http://actual_server:5006
-      - ACTUAL_PASSWORD=[PASSWORD]
-      - ACTUAL_SYNC_ID=[ID]
-      - ACTUAL_BUDGET_ENCRYPTION_KEY=[KEY]
+      - ACTUAL_PASSWORD=${ACTUAL_PASSWORD}
+      - ACTUAL_SYNC_ID=${ACTUAL_SYNC_ID}
+      - ACTUAL_BUDGET_ENCRYPTION_KEY=${ACTUAL_BUDGET_ENCRYPTION_KEY}
       - ACTUAL_DATA_DIR=/app/data
     volumes:
       - api:/app/data

@@ -25,11 +25,19 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
+      # Pendant start_period, vérifie toutes les 5s (au lieu de 60s) pour que
+      # actual_api puisse démarrer dès que le serveur est prêt.
+      start_interval: 5s
     restart: always
   actual_api:
     build:
       context: .
       dockerfile: Dockerfile
+    depends_on:
+      actual_server:
+        condition: service_healthy
+        restart: true
+    restart: unless-stopped
     ports:
       - '${ACTUAL_API_PORT:-6319}:3000'
     environment:

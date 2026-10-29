@@ -1,5 +1,6 @@
 import express, { NextFunction, Request, Response } from 'express'
 import {
+    createAccount,
     downloadBudget,
     getAccountBalance,
     getAccounts,
@@ -21,6 +22,8 @@ import {
     GetTransactionsQuerySchema,
     ImportTransactionsResultSchema,
     AccountsResponse,
+    CreateAccountRequestSchema,
+    CreateAccountResponse,
     CreateTransactionResponse,
     GetTransactionsResponse,
     TransactionRecord,
@@ -155,6 +158,46 @@ app.get('/api/accounts', async (_, res: Response) => {
     } catch (error) {
         logError('ACTUAL_API', 'Error fetching accounts', error)
         res.status(500).json({ error: 'Failed to fetch accounts' })
+    }
+})
+
+app.post('/api/accounts', async (req: Request, res: Response) => {
+    try {
+        const validationResult = CreateAccountRequestSchema.safeParse(req.body)
+
+        if (!validationResult.success) {
+            logError(
+                'ZOD_VALIDATION',
+                'Account validation failed',
+                validationResult.error,
+                { requestBody: req.body }
+            )
+            return res.status(400).json({
+                success: false,
+                message: 'Validation failed',
+                errors: validationResult.error.issues,
+            })
+        }
+
+        const { name, offBudget } = validationResult.data
+
+        // initialBalance is integer cents; new accounts always start at 0.
+        const id = await createAccount({ name, offbudget: offBudget }, 0)
+
+        // Confirm the account is persisted on the server before responding 201.
+        await sync()
+
+        const response: CreateAccountResponse = { success: true, id }
+
+        res.status(201).json(response)
+    } catch (error) {
+        logError('ACTUAL_API', 'Error creating account', error, {
+            requestBody: req.body,
+        })
+        res.status(500).json({
+            success: false,
+            message: 'Failed to create account',
+        })
     }
 })
 
